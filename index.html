@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Turnos Padel Team</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@300;400;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyClQCeB0wyX12KcsSSgIT1pdvh3jTS20qA",
+  authDomain: "padel-team-76749.firebaseapp.com",
+  projectId: "padel-team-76749",
+  storageBucket: "padel-team-76749.firebasestorage.app",
+  messagingSenderId: "449257104174",
+  appId: "1:449257104174:web:7f72b5d62c2d92813dd0bf"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+const HORAS = ["12:00","13:15","14:30","15:45","17:00","18:15","19:30","20:45","22:00","23:15"];
+const DIAS  = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+const DIAS_CORTO = ["DOM","LUN","MAR","MIÉ","JUE","VIE","SÁB"];
+
+// Detectar modo: ?ver = solo lectura para clientes
+const esCliente = window.location.search.includes('ver');
+
+let diaActivo = 0;
+let dias = [];
+let unsubscribe = null;
+let estadoDia = null; // datos del día activo en tiempo real
+
+function diaKey(d) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function initDias() {
+  const hoy = new Date();
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(hoy);
+    d.setDate(hoy.getDate() + i);
+    dias.push(d);
+  }
+}
+
+function emptyDia() {
+  return {
+    ocupados: Array(HORAS.length).fill(false),
+    nombres:  Array(HORAS.length).fill(""),
+    tels:     Array(HORAS.length).fill(""),
+    fijos:    Array(HORAS.length).fill(false)
+  };
+}
+
+// ── TURNOS FIJOS ──────────────────────────────────────────
+// Guarda/lee turnos fijos en colección separada: "fijos/{diaSemana}"
+// diaSemana: 0=Dom,1=Lun,...,6=Sáb
+async function guardarFijo(diaSemana, idx, nombre, tel, activo) {
+  const key = String(diaSemana);
+  let docRef = doc(db, "turnosfijos", key);
+  let snap = await getDoc(docRef);
+  let data = snap.exists() ? snap.data() : {
+    nombres: Array(HORAS.length).fill(""),
+    tels:    Array(HORAS.length).fill(""),
+    activos: Array(HORAS.length).fill(false)
+  };
+  data.nombres[idx] = nombre;
+  data.tels[idx]    = tel;
+  data.activos[idx] = activo;
+  await setDoc(docRef, data);
+}
+
+async function cargarFijosDelDia(diaSemana) {
+  const key = String(diaSemana);
+  const snap = await getDoc(doc(db, "turnosfijos", key));
+  return snap.exists() ? snap.data() : null;
+}
+
+// Aplica los turnos fijos al día si el slot no está ya ocupado manualmente
+async function aplicarFijosAlDia(diaDate, diaKeyStr) {
+  const fijos = await cargarFijosDelDia(diaDate.getDay());
+  if (!fijos) return;
+  const snap = await getDoc(doc(db, "turnos", diaKeyStr));
+  const estado = snap.exists() ? snap.data() : emptyDia();
+  let cambio = false;
+  fijos.activos.forEach((activo, i) => {
+    if (activo && !estado.ocupados[i]) {
+      estado.ocupados[i] = true;
+      estado.nombres[i]  = fijos.nombres[i];
+      estado.tels[i]     = fijos.tels[i];
+      estado.fijos       = estado.fijos || Array(HORAS.length).fill(false);
+      estado.fijos[i]    = true;
+      cambio = true;
+    }
+  });
+  if (cambio) await guardarDia(diaKeyStr, estado);
+}
+
+// ── FIREBASE ──────────────────────────────────────────────
+async function guardarDia(key, data) {
+  try {
+    await setDoc(doc(db, "turnos", key), data);
+  } catch(e) { console.error("Error guardando:", e); }
+}
+
+function escucharDia(key) {
+  if (unsubscribe) unsubscribe();
+  // Aplicar fijos al día antes de escuchar
+  aplicarFijosAlDia(dias[diaActivo], key);
+  unsubscribe = onSnapshot(doc(db, "turnos", key), (snap) => {
+    const activeEl = document.activeElement;
+    const estaEscribiendo = activeEl && (activeEl.classList.contains('turno-nombre') || activeEl.classList.contains('turno-tel'));
+    estadoDia = snap.exists() ? snap.data() : emptyDia();
+    if (!estadoDia.fijos) estadoDia.fijos = Array(HORAS.length).fill(false);
+    if (!estaEscribiendo) renderTurnos();
+  });
+}
+
+// ── DAYS ──────────────────────────────────────────────────
+function renderDays() {
+  const wrap = document.getElementById('daySelector');
+  wrap.innerHTML = '';
+  dias.forEach((d, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'day-btn' + (i === diaActivo ? ' active' : '');
+    const dd = String(d.getDate()).padStart(2,'0');
+    const mm = String(d.getMonth()+1).padStart(2,'0');
+    btn.textContent = DIAS_CORTO[d.getDay()] + ' ' + dd + '/' + mm;
+    btn.onclick = () => { diaActivo = i; renderDays(); escucharDia(diaKey(dias[diaActivo])); };
+    wrap.appendChild(btn);
+  });
+}
+
+// ── TURNOS ────────────────────────────────────────────────
+function renderTurnos() {
+  if (!estadoDia) return;
+  const s = estadoDia;
+  const wrap = document.getElementById('turnosWrap');
+  wrap.innerHTML = '';
+
+  if (esCliente) {
+    // Vista cliente: solo lectura
+    HORAS.forEach((hora, i) => {
+      const row = document.createElement('div');
+      row.className = 'turno-row-cliente';
+      const ocupado = s.ocupados[i];
+      const esTorneo = s.nombres[i] && s.nombres[i].toLowerCase() === 'torneo';
+
+      if (ocupado) {
+        row.innerHTML = `
+          <div class="cliente-hora ocupado-c">${hora}</div>
+          <div class="cliente-estado ${esTorneo ? 'torneo-badge' : 'ocupado-badge'}">${esTorneo ? 'TORNEO' : 'OCUPADO'}</div>`;
+      } else {
+        row.innerHTML = `
+          <div class="cliente-hora libre-c">${hora}</div>
+          <div class="cliente-estado libre-badge">DISPONIBLE</div>`;
+      }
+      wrap.appendChild(row);
+    });
+    return;
+  }
+
+  // Vista equipo: editable
+  HORAS.forEach((hora, i) => {
+    const row = document.createElement('div');
+    row.className = 'turno-row';
+
+    const esFijo = !!(s.fijos && s.fijos[i]);
+    const btn = document.createElement('button');
+    const esTorneo = s.nombres[i] && s.nombres[i].toLowerCase() === 'torneo';
+    btn.className = 'turno-hora-btn' + (s.ocupados[i] ? ' ocupado' : '') + (esTorneo ? ' torneo' : '') + (esFijo ? ' fijo' : '');
+    btn.innerHTML = `
+      <span class="hora-text">${hora}</span>
+      <span class="x-icon">
+        <svg width="72" height="52" viewBox="0 0 72 52" xmlns="http://www.w3.org/2000/svg">
+          <line x1="6" y1="6" x2="66" y2="46" stroke="${esFijo ? '#7c3aed' : '#e63946'}" stroke-width="10" stroke-linecap="round"/>
+          <line x1="66" y1="6" x2="6" y2="46" stroke="${esFijo ? '#7c3aed' : '#e63946'}" stroke-width="10" stroke-linecap="round"/>
+        </svg>
+      </span>`;
+
+    btn.onclick = async () => {
+      if (esFijo) return; // turno fijo no se puede tocar con click simple
+      const nuevo = { ...estadoDia,
+        ocupados: [...estadoDia.ocupados],
+        nombres: [...estadoDia.nombres],
+        tels: [...estadoDia.tels],
+        fijos: [...(estadoDia.fijos || Array(HORAS.length).fill(false))]
+      };
+      nuevo.ocupados[i] = !nuevo.ocupados[i];
+      if (!nuevo.ocupados[i]) { nuevo.nombres[i] = ''; nuevo.tels[i] = ''; }
+      await guardarDia(diaKey(dias[diaActivo]), nuevo);
+    };
+
+    const info = document.createElement('div');
+    info.className = 'turno-info' + (esTorneo ? ' torneo-info' : '') + (esFijo ? ' fijo-info' : '');
+
+    const nombre = document.createElement('input');
+    nombre.className = 'turno-nombre' + (esTorneo ? ' torneo-nombre' : '') + (esFijo ? ' fijo-nombre' : '');
+    nombre.type = 'text';
+    nombre.placeholder = 'Nombre del cliente...';
+    nombre.value = s.nombres[i] || '';
+    if (esFijo) nombre.readOnly = true;
+
+    let nombreTimer = null;
+    nombre.oninput = () => {
+      if (esFijo) return;
+      estadoDia.nombres[i] = nombre.value;
+      const esTorneoActual = nombre.value.toLowerCase() === 'torneo';
+      nombre.className = 'turno-nombre' + (esTorneoActual ? ' torneo-nombre' : '');
+      info.className = 'turno-info' + (esTorneoActual ? ' torneo-info' : '');
+      clearTimeout(nombreTimer);
+      nombreTimer = setTimeout(async () => {
+        const nuevo = { ...estadoDia, nombres: [...estadoDia.nombres], ocupados: [...estadoDia.ocupados], tels: [...estadoDia.tels], fijos: [...(estadoDia.fijos || Array(HORAS.length).fill(false))] };
+        nuevo.nombres[i] = nombre.value;
+        if (nombre.value.toLowerCase() === 'torneo') {
+          for (let j = i; j < HORAS.length; j++) {
+            if (!nuevo.ocupados[j]) { nuevo.ocupados[j] = true; nuevo.nombres[j] = 'torneo'; }
+          }
+        }
+        await guardarDia(diaKey(dias[diaActivo]), nuevo);
+      }, 800);
+    };
+
+    const tel = document.createElement('input');
+    tel.className = 'turno-tel' + (esFijo ? ' fijo-tel' : '');
+    tel.type = 'tel';
+    tel.placeholder = 'Teléfono...';
+    tel.value = s.tels[i] || '';
+    if (esFijo) tel.readOnly = true;
+
+    let telTimer = null;
+    tel.oninput = () => {
+      if (esFijo) return;
+      estadoDia.tels[i] = tel.value;
+      clearTimeout(telTimer);
+      telTimer = setTimeout(async () => {
+        const nuevo = { ...estadoDia, tels: [...estadoDia.tels], ocupados: [...estadoDia.ocupados], nombres: [...estadoDia.nombres], fijos: [...(estadoDia.fijos || Array(HORAS.length).fill(false))] };
+        nuevo.tels[i] = tel.value;
+        await guardarDia(diaKey(dias[diaActivo]), nuevo);
+      }, 800);
+    };
+
+    // ── CANDADO ──
+    const candado = document.createElement('button');
+    candado.className = 'candado-btn' + (esFijo ? ' bloqueado' : '');
+    candado.title = esFijo ? 'Doble click para desbloquear turno fijo' : 'Click para fijar este turno semanalmente';
+    candado.textContent = esFijo ? '🔒' : '🔓';
+    candado.onclick = async (e) => {
+      e.stopPropagation();
+      if (esFijo) return; // solo doble click desbloquea
+      // Leer valores directamente del input (no del estado, puede tener debounce pendiente)
+      const nombreVal = nombre.value.trim() || s.nombres[i] || '';
+      const telVal    = tel.value.trim()    || s.tels[i]    || '';
+      const diaSemana = dias[diaActivo].getDay();
+      await guardarFijo(diaSemana, i, nombreVal, telVal, true);
+      // Marcar como fijo en el día actual también
+      const nuevo = { ...estadoDia,
+        ocupados: [...estadoDia.ocupados],
+        nombres:  [...estadoDia.nombres],
+        tels:     [...estadoDia.tels],
+        fijos:    [...(estadoDia.fijos || Array(HORAS.length).fill(false))]
+      };
+      nuevo.ocupados[i] = true;
+      nuevo.nombres[i]  = nombreVal;
+      nuevo.tels[i]     = telVal;
+      nuevo.fijos[i]    = true;
+      await guardarDia(diaKey(dias[diaActivo]), nuevo);
+      showToast('🔒 Turno fijo guardado');
+    };
+    candado.ondblclick = async (e) => {
+      e.stopPropagation();
+      if (!esFijo) return;
+      if (!confirm('¿Desbloquear este turno fijo? Se liberará para todas las semanas siguientes.')) return;
+      const diaSemana = dias[diaActivo].getDay();
+      await guardarFijo(diaSemana, i, '', '', false);
+      // Liberar en el día actual
+      const nuevo = { ...estadoDia,
+        ocupados: [...estadoDia.ocupados],
+        nombres:  [...estadoDia.nombres],
+        tels:     [...estadoDia.tels],
+        fijos:    [...(estadoDia.fijos || Array(HORAS.length).fill(false))]
+      };
+      nuevo.fijos[i]    = false;
+      nuevo.ocupados[i] = false;
+      nuevo.nombres[i]  = '';
+      nuevo.tels[i]     = '';
+      await guardarDia(diaKey(dias[diaActivo]), nuevo);
+      showToast('🔓 Turno fijo liberado');
+    };
+
+    const fields = document.createElement('div');
+    fields.className = 'turno-info-fields';
+    fields.appendChild(nombre);
+    fields.appendChild(tel);
+    info.appendChild(fields);
+    info.appendChild(candado);
+    row.appendChild(btn);
+    row.appendChild(info);
+    wrap.appendChild(row);
+  });
+}
+
+
+// ── RESET ─────────────────────────────────────────────────
+window.resetDia = async function() {
+  if (!confirm('¿Limpiar todos los turnos de este día?')) return;
+  await guardarDia(diaKey(dias[diaActivo]), emptyDia());
+  showToast('✓ Turnos limpiados');
+}
+
+// ── IMAGEN ────────────────────────────────────────────────
+window.generarImagen = async function() {
+  if (!estadoDia) return;
+  const s = estadoDia;
+  const dia = dias[diaActivo];
+  const diaLabel = DIAS[dia.getDay()].toUpperCase() + ' ' +
+    String(dia.getDate()).padStart(2,'0') + '/' +
+    String(dia.getMonth()+1).padStart(2,'0');
+
+  document.getElementById('ct-dia').textContent = diaLabel;
+
+  const ctT = document.getElementById('ct-turnos');
+  ctT.innerHTML = '';
+  HORAS.forEach((hora, i) => {
+    const div = document.createElement('div');
+    div.className = 'ct-turno';
+    const ocupado = s.ocupados[i];
+    const esTorneo = s.nombres[i] && s.nombres[i].toLowerCase() === 'torneo';
+    const cls = ocupado ? 'ocupado-h' : 'libre';
+    const clienteNombre = (!esTorneo && s.nombres[i]) ? s.nombres[i].toUpperCase() : '';
+    let xHtml = '';
+    let clienteHtml = '';
+    if (ocupado) {
+      if (esTorneo) {
+        div.innerHTML = `
+          <div class="ct-hora-wrap">
+            <span class="ct-hora torneo-h">TORNEO</span>
+          </div>`;
+        ctT.appendChild(div);
+        return;
+      }
+      xHtml = `<span class="ct-x"><svg width="82" height="58" viewBox="0 0 82 58" xmlns="http://www.w3.org/2000/svg"><line x1="7" y1="7" x2="75" y2="51" stroke="#e63946" stroke-width="11" stroke-linecap="round"/><line x1="75" y1="7" x2="7" y2="51" stroke="#e63946" stroke-width="11" stroke-linecap="round"/></svg></span>`;
+      clienteHtml = `<span class="ct-cliente">OCUPADO</span>`;
+    }
+    div.innerHTML = `<div class="ct-hora-wrap"><span class="ct-hora ${cls}">${hora}</span>${xHtml}</div>${clienteHtml}`;
+    ctT.appendChild(div);
+  });
+
+  const ctC = document.getElementById('ct-contactos');
+  ctC.innerHTML = '';
+  [
+    { n: document.getElementById('cfg-n1').value, t: document.getElementById('cfg-t1').value },
+    { n: document.getElementById('cfg-n2').value, t: document.getElementById('cfg-t2').value },
+    { n: document.getElementById('cfg-n3').value, t: document.getElementById('cfg-t3').value },
+  ].forEach(c => {
+    if (c.n || c.t) {
+      const p = document.createElement('div');
+      p.className = 'ct-contacto';
+      p.textContent = (c.t || '') + (c.n ? '  ( ' + c.n + ' )' : '');
+      ctC.appendChild(p);
+    }
+  });
+
+  showToast('⏳ Generando imagen...');
+  await new Promise(r => setTimeout(r, 350));
+
+  try {
+    const canvas = await html2canvas(document.getElementById('canvas-template'), {
+      backgroundColor: '#000000', scale: 2, useCORS: true, logging: false
+    });
+    const dataUrl = canvas.toDataURL('image/png');
+    const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
+    if (isMobile) {
+      const win = window.open();
+      win.document.write(`<html><body style="background:#000;margin:0;padding:10px;text-align:center">
+        <img src="${dataUrl}" style="width:100%;max-width:600px;display:block;margin:0 auto">
+        <p style="font-family:sans-serif;color:#666;padding:12px;font-size:14px">Mantené presionada la imagen para guardarla 📥</p>
+      </body></html>`);
+      showToast('✓ Mantené presionada para guardar');
+    } else {
+      const link = document.createElement('a');
+      link.download = `turnos_${diaLabel.replace('/','_').replace(' ','_')}.png`;
+      link.href = dataUrl;
+      link.click();
+      showToast('✓ Imagen descargada');
+    }
+  } catch(e) { showToast('Error al generar imagen'); console.error(e); }
+}
+
+window.toggleConfig = function() {
+  document.getElementById('configToggle').classList.toggle('open');
+  document.getElementById('configBody').classList.toggle('open');
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+// ── CONFIG PERSISTENCIA LOCAL ──────────────────────────────
+const CFG_FIELDS = ['cfg-n1','cfg-t1','cfg-n2','cfg-t2','cfg-n3','cfg-t3'];
+function saveConfig() {
+  const data = {};
+  CFG_FIELDS.forEach(id => data[id] = document.getElementById(id).value);
+  localStorage.setItem('padelteam_config', JSON.stringify(data));
+}
+function loadConfig() {
+  try {
+    const data = JSON.parse(localStorage.getItem('padelteam_config') || '{}');
+    CFG_FIELDS.forEach(id => { if (data[id]) document.getElementById(id).value = data[id]; });
+  } catch(e) {}
+}
+
+// ── INIT ──────────────────────────────────────────────────
+initDias();
+loadConfig();
+CFG_FIELDS.forEach(id => document.getElementById(id).addEventListener('input', saveConfig));
+
+// Ajustar UI según modo
+if (esCliente) {
+  document.getElementById('modoCliente').style.display = 'block';
+  document.getElementById('modoEquipo').style.display = 'none';
+  document.getElementById('headerSub').textContent = 'TURNOS DISPONIBLES';
+} else {
+  document.getElementById('modoCliente').style.display = 'none';
+  document.getElementById('modoEquipo').style.display = 'block';
+}
+
+renderDays();
+escucharDia(diaKey(dias[diaActivo]));
+</script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+body { background: #0d0d0d; min-height: 100vh; font-family: 'Oswald', sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px 14px 40px; }
+
+/* HEADER */
+.header { text-align: center; margin-bottom: 14px; }
+.header .padel-label { font-family: 'Bebas Neue', sans-serif; font-size: 20px; color: #4a9eff; letter-spacing: 10px; line-height: 1; }
+.header h1 { font-family: 'Bebas Neue', sans-serif; font-size: 64px; color: #fff; letter-spacing: 6px; line-height: 0.95; }
+.header .sub { font-family: 'Bebas Neue', sans-serif; font-size: 18px; color: #4a9eff; letter-spacing: 6px; margin-top: 2px; }
+.balls { font-size: 22px; margin-bottom: 4px; }
+
+/* CONFIG */
+.config-panel { width: 100%; max-width: 440px; background: #1a1a1a; border-radius: 12px; border: 1px solid #2a2a2a; margin-bottom: 14px; overflow: hidden; }
+.config-toggle { width: 100%; background: none; border: none; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; color: #888; font-family: 'Oswald', sans-serif; font-size: 14px; letter-spacing: 2px; text-transform: uppercase; }
+.config-toggle .arrow { color: #4a9eff; font-size: 18px; transition: transform 0.3s; display:inline-block; }
+.config-toggle.open .arrow { transform: rotate(180deg); }
+.config-body { display: none; padding: 0 16px 16px; border-top: 1px solid #222; }
+.config-body.open { display: block; }
+.config-row { margin-top: 12px; }
+.config-row label { display: block; color: #555; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 4px; }
+.config-row input { width: 100%; background: #111; border: 1px solid #333; border-radius: 8px; padding: 9px 12px; color: #fff; font-family: 'Oswald', sans-serif; font-size: 15px; letter-spacing: 1px; outline: none; }
+.config-row input:focus { border-color: #4a9eff; }
+
+/* DAY SELECTOR */
+.day-selector { display: flex; gap: 6px; overflow-x: auto; width: 100%; max-width: 440px; padding: 2px 0 12px; scrollbar-width: none; }
+.day-selector::-webkit-scrollbar { display: none; }
+.day-btn { flex-shrink: 0; background: #1a1a1a; color: #666; border: 1.5px solid #2a2a2a; border-radius: 8px; padding: 6px 13px; font-family: 'Oswald', sans-serif; font-size: 12px; letter-spacing: 1px; cursor: pointer; transition: all 0.2s; text-transform: uppercase; }
+.day-btn.active { background: #4a9eff; color: #fff; border-color: #4a9eff; }
+
+/* TURNOS EQUIPO */
+.turnos-wrap { width: 100%; max-width: 440px; margin-bottom: 20px; }
+.turno-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.turno-hora-btn { flex-shrink: 0; width: 115px; background: none; border: none; cursor: pointer; padding: 0; position: relative; display: flex; align-items: center; justify-content: center; transition: transform 0.1s; }
+.turno-hora-btn:active { transform: scale(0.93); }
+.hora-text { font-family: 'Bebas Neue', sans-serif; font-size: 48px; color: #4a9eff; letter-spacing: 3px; line-height: 1; transition: color 0.2s, opacity 0.2s; user-select: none; }
+.turno-hora-btn.ocupado .hora-text { color: #2e2e2e; opacity: 0.8; }
+.turno-hora-btn.torneo .hora-text { color: #00c9c9; opacity: 1; }
+.x-icon { position: absolute; display: none; pointer-events: none; }
+.turno-hora-btn.ocupado .x-icon { display: block; }
+.turno-hora-btn.torneo .x-icon { display: none; }
+.turno-info { flex: 1; background: #161616; border: 1px solid #222; border-radius: 8px; padding: 7px 10px; display: flex; flex-direction: row; align-items: center; gap: 6px; min-width: 0; }
+.turno-info-fields { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.turno-info.torneo-info { border-color: #00c9c9; background: #001a1a; }
+.turno-nombre { width: 100%; background: none; border: none; color: #ccc; font-family: 'Oswald', sans-serif; font-size: 14px; outline: none; padding: 0; }
+.turno-nombre::placeholder { color: #3a3a3a; }
+.turno-nombre:focus { color: #fff; }
+.turno-nombre.torneo-nombre { color: #00c9c9; font-weight: 600; }
+.turno-tel { width: 100%; background: none; border: none; color: #555; font-family: 'Oswald', sans-serif; font-size: 12px; outline: none; padding: 0; }
+.turno-tel::placeholder { color: #2a2a2a; }
+
+/* TURNO FIJO */
+.turno-hora-btn.fijo .hora-text { color: #a855f7; opacity: 1; }
+.turno-info.fijo-info { border-color: #7c3aed; background: #0f0a1a; }
+.turno-nombre.fijo-nombre { color: #c084fc; }
+.turno-tel.fijo-tel { color: #7c3aed; }
+
+/* CANDADO */
+.candado-btn {
+  flex-shrink: 0;
+  background: none; border: none; cursor: pointer;
+  font-size: 16px; padding: 4px;
+  opacity: 0.25; transition: opacity 0.2s, transform 0.15s;
+  line-height: 1; align-self: center;
+}
+.candado-btn:hover { opacity: 0.8; transform: scale(1.2); }
+.candado-btn.bloqueado { opacity: 1; }
+
+/* TURNOS CLIENTE */
+.turno-row-cliente { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; padding: 6px 0; }
+.cliente-hora { font-family: 'Bebas Neue', sans-serif; font-size: 46px; letter-spacing: 3px; width: 115px; text-align: center; flex-shrink: 0; }
+.libre-c { color: #4a9eff; }
+.ocupado-c { color: #333; }
+.cliente-estado { font-family: 'Oswald', sans-serif; font-size: 16px; font-weight: 600; letter-spacing: 2px; padding: 4px 12px; border-radius: 6px; }
+.libre-badge { background: #0a2a0a; color: #4caf50; border: 1px solid #4caf50; }
+.ocupado-badge { background: #2a0a0a; color: #e63946; border: 1px solid #e63946; }
+.torneo-badge { background: #001a1a; color: #00c9c9; border: 1px solid #00c9c9; }
+
+.divider-line { width: 100%; max-width: 440px; height: 1px; background: #1e1e1e; margin: 4px 0 14px; }
+
+/* BOTONES */
+.btn-group { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 10px; }
+.btn { width: 100%; padding: 15px; border: none; border-radius: 10px; font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 2px; cursor: pointer; transition: opacity 0.15s, transform 0.1s; }
+.btn:active { transform: scale(0.98); opacity: 0.85; }
+.btn-img { background: #4a9eff; color: #fff; }
+.btn-reset { background: #1a1a1a; color: #555; border: 1.5px solid #252525; font-size: 15px; letter-spacing: 1.5px; }
+
+/* TOAST */
+.toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(100px); background: #4a9eff; color: #fff; font-family: 'Oswald', sans-serif; font-size: 15px; padding: 10px 28px; border-radius: 30px; letter-spacing: 1px; transition: transform 0.35s cubic-bezier(.21,1.02,.73,1); z-index: 9999; white-space: nowrap; pointer-events: none; }
+.toast.show { transform: translateX(-50%) translateY(0); }
+
+/* PLANTILLA IMAGEN */
+#canvas-template { position: fixed; top: -9999px; left: -9999px; width: 600px; background: #000; padding: 44px 50px 40px; }
+.ct-balls { text-align: center; font-size: 30px; margin-bottom: 2px; }
+.ct-padel { font-family: 'Bebas Neue', sans-serif; font-size: 22px; color: #4a9eff; text-align: center; letter-spacing: 12px; line-height: 1; }
+.ct-title { font-family: 'Bebas Neue', sans-serif; font-size: 90px; color: #fff; text-align: center; letter-spacing: 8px; line-height: 0.95; }
+.ct-sub { font-family: 'Bebas Neue', sans-serif; font-size: 28px; color: #4a9eff; text-align: center; letter-spacing: 6px; margin-bottom: 6px; }
+.ct-dia { font-family: 'Bebas Neue', sans-serif; font-size: 24px; color: #aaa; text-align: center; letter-spacing: 4px; margin-bottom: 18px; }
+.ct-turnos { display: flex; flex-direction: column; align-items: center; margin-bottom: 20px; gap: 0; }
+.ct-turno { display: flex; align-items: center; width: 480px; min-height: 66px; }
+.ct-hora-wrap { position: relative; width: 240px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ct-hora { font-family: 'Bebas Neue', sans-serif; font-size: 58px; letter-spacing: 6px; }
+.ct-hora.libre { color: #4a9eff; }
+.ct-hora.ocupado-h { color: #2a2a2a; }
+.ct-hora.torneo-h { color: #00c9c9; font-size: 36px; letter-spacing: 4px; }
+.ct-x { position: absolute; left: 50%; transform: translateX(-50%); }
+.ct-cliente { font-family: 'Oswald', sans-serif; font-size: 22px; color: #e63946; letter-spacing: 1px; flex: 1; text-align: left; font-weight: 700; text-transform: uppercase; padding-left: 12px; }
+.ct-sep { width: 200px; height: 1px; background: #222; margin: 10px auto 18px; }
+.ct-pedido { font-family: 'Oswald', sans-serif; font-size: 22px; color: #fff; text-align: center; letter-spacing: 3px; font-weight: 600; margin-bottom: 10px; }
+.ct-contactos { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.ct-contacto { font-family: 'Oswald', sans-serif; font-size: 24px; color: #fff; letter-spacing: 2px; }
+
+/* BANNER CLIENTE */
+.banner-cliente { width: 100%; max-width: 440px; background: #001a1a; border: 1px solid #00c9c9; border-radius: 10px; padding: 10px 16px; text-align: center; margin-bottom: 14px; }
+.banner-cliente p { color: #00c9c9; font-family: 'Oswald', sans-serif; font-size: 13px; letter-spacing: 2px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="balls">🎾 🎾</div>
+  <div class="padel-label">PADEL</div>
+  <h1>TEAM</h1>
+  <div class="sub" id="headerSub">TURNOS</div>
+</div>
+
+<!-- Banner modo cliente -->
+<div id="modoCliente">
+  <div class="banner-cliente">
+    <p>🟢 DISPONIBLE &nbsp;|&nbsp; 🔴 OCUPADO &nbsp;|&nbsp; 🔵 TORNEO</p>
+  </div>
+</div>
+
+<!-- Panel config (solo equipo) -->
+<div id="modoEquipo">
+  <div class="config-panel">
+    <button class="config-toggle" id="configToggle" onclick="toggleConfig()">
+      ⚙️ &nbsp;Modificar contactos
+      <span class="arrow">▼</span>
+    </button>
+    <div class="config-body" id="configBody">
+      <div class="config-row"><label>Nombre contacto 1</label><input type="text" id="cfg-n1" value="IVAN"></div>
+      <div class="config-row"><label>Teléfono contacto 1</label><input type="tel" id="cfg-t1" value="2392-562407"></div>
+      <div class="config-row"><label>Nombre contacto 2</label><input type="text" id="cfg-n2" value="SIL"></div>
+      <div class="config-row"><label>Teléfono contacto 2</label><input type="tel" id="cfg-t2" value="2392-459981"></div>
+      <div class="config-row"><label>Nombre contacto 3</label><input type="text" id="cfg-n3" value="MAURO"></div>
+      <div class="config-row"><label>Teléfono contacto 3</label><input type="tel" id="cfg-t3" value="221-3534430"></div>
+    </div>
+  </div>
+</div>
+
+<div class="day-selector" id="daySelector"></div>
+<div class="turnos-wrap" id="turnosWrap"></div>
+<div class="divider-line"></div>
+
+<!-- Botones solo equipo -->
+<div id="botonesEquipo">
+  <div class="btn-group">
+    <button class="btn btn-img" onclick="generarImagen()">📸 GENERAR IMAGEN PARA COMPARTIR</button>
+    <button class="btn btn-reset" onclick="resetDia()">↺ LIMPIAR TURNOS DEL DÍA</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Plantilla imagen -->
+<div id="canvas-template">
+  <div class="ct-balls">🎾 🎾</div>
+  <div class="ct-padel">· PADEL ·</div>
+  <div class="ct-title">TEAM</div>
+  <div class="ct-sub">TURNOS DISPONIBLES</div>
+  <div class="ct-dia" id="ct-dia"></div>
+  <div class="ct-turnos" id="ct-turnos"></div>
+  <div class="ct-sep"></div>
+  <div class="ct-pedido">PEDIDO AL :</div>
+  <div class="ct-contactos" id="ct-contactos"></div>
+</div>
+
+<script>
+// Ocultar botones en modo cliente
+if (window.location.search.includes('ver')) {
+  document.getElementById('botonesEquipo').style.display = 'none';
+  document.getElementById('modoEquipo').style.display = 'none';
+}
+</script>
+</body>
+</html>
