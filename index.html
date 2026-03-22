@@ -313,7 +313,7 @@ function renderTurnos() {
           tels:     [...estadoDia.tels],
           fijos:    [...(estadoDia.fijos || Array(HORAS.length).fill(false))]
         };
-        nuevo.fijos[i]    = true; // sigue siendo fijo para otras semanas
+        nuevo.fijos[i]    = false; // esta semana no es fijo
         nuevo.ocupados[i] = false;
         nuevo.nombres[i]  = '';
         nuevo.tels[i]     = '';
