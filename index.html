@@ -89,8 +89,11 @@ async function aplicarFijosAlDia(diaDate, diaKeyStr) {
   if (!fijos) return;
   const snap = await getDoc(doc(db, "turnos", diaKeyStr));
   const estado = snap.exists() ? snap.data() : emptyDia();
+  const excepciones = fijos.excepciones || {};
   let cambio = false;
   fijos.activos.forEach((activo, i) => {
+    // No aplicar si hay excepción para esta fecha específica
+    if (activo && excepciones[i]?.includes(diaKeyStr)) return;
     if (activo && !estado.ocupados[i]) {
       estado.ocupados[i] = true;
       estado.nombres[i]  = fijos.nombres[i];
@@ -277,22 +280,65 @@ function renderTurnos() {
     candado.ondblclick = async (e) => {
       e.stopPropagation();
       if (!esFijo) return;
-      if (!confirm('¿Desbloquear este turno fijo? Se liberará para todas las semanas siguientes.')) return;
-      const diaSemana = dias[diaActivo].getDay();
-      await guardarFijo(diaSemana, i, '', '', false);
-      // Liberar en el día actual
-      const nuevo = { ...estadoDia,
-        ocupados: [...estadoDia.ocupados],
-        nombres:  [...estadoDia.nombres],
-        tels:     [...estadoDia.tels],
-        fijos:    [...(estadoDia.fijos || Array(HORAS.length).fill(false))]
+      
+      // Mostrar menú de opciones
+      const menu = document.createElement('div');
+      menu.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#1a1a2e;border:1px solid #4a9eff;border-radius:12px;padding:20px;z-index:9999;min-width:280px;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
+      menu.innerHTML = `
+        <div style="font-family:'Oswald',sans-serif;font-size:14px;letter-spacing:2px;color:#4a9eff;margin-bottom:16px;">DESBLOQUEAR TURNO FIJO</div>
+        <div style="font-family:sans-serif;font-size:13px;color:#aaa;margin-bottom:16px;">${s.nombres[i]} · ${HORAS[i]}</div>
+        <button id="btn-esta-semana" style="width:100%;padding:12px;background:rgba(74,158,255,0.1);border:1px solid #4a9eff;border-radius:8px;color:#4a9eff;font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:1px;cursor:pointer;margin-bottom:8px;">📅 SOLO ESTA SEMANA</button>
+        <button id="btn-permanente" style="width:100%;padding:12px;background:rgba(230,57,70,0.1);border:1px solid #e63946;border-radius:8px;color:#e63946;font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:1px;cursor:pointer;margin-bottom:8px;">🔓 DESBLOQUEAR PERMANENTE</button>
+        <button id="btn-cancelar" style="width:100%;padding:10px;background:none;border:1px solid #333;border-radius:8px;color:#666;font-family:'Oswald',sans-serif;font-size:12px;letter-spacing:1px;cursor:pointer;">CANCELAR</button>
+      `;
+      document.body.appendChild(menu);
+
+      document.getElementById('btn-cancelar').onclick = () => menu.remove();
+
+      document.getElementById('btn-esta-semana').onclick = async () => {
+        menu.remove();
+        // Guardar excepción para esta fecha específica
+        const fechaExcepcion = diaKey(dias[diaActivo]);
+        const diaSemana = dias[diaActivo].getDay();
+        const fijosSnap = await getDoc(doc(db, 'turnosfijos', `${diaSemana}`));
+        const fijosData = fijosSnap.exists() ? fijosSnap.data() : {};
+        const excepciones = fijosData.excepciones || {};
+        if (!excepciones[i]) excepciones[i] = [];
+        if (!excepciones[i].includes(fechaExcepcion)) excepciones[i].push(fechaExcepcion);
+        await setDoc(doc(db, 'turnosfijos', `${diaSemana}`), { ...fijosData, excepciones }, { merge: true });
+        // Liberar solo en este día
+        const nuevo = { ...estadoDia,
+          ocupados: [...estadoDia.ocupados],
+          nombres:  [...estadoDia.nombres],
+          tels:     [...estadoDia.tels],
+          fijos:    [...(estadoDia.fijos || Array(HORAS.length).fill(false))]
+        };
+        nuevo.fijos[i]    = true; // sigue siendo fijo para otras semanas
+        nuevo.ocupados[i] = false;
+        nuevo.nombres[i]  = '';
+        nuevo.tels[i]     = '';
+        await guardarDia(diaKey(dias[diaActivo]), nuevo);
+        showToast('📅 Turno liberado solo esta semana');
       };
-      nuevo.fijos[i]    = false;
-      nuevo.ocupados[i] = false;
-      nuevo.nombres[i]  = '';
-      nuevo.tels[i]     = '';
-      await guardarDia(diaKey(dias[diaActivo]), nuevo);
-      showToast('🔓 Turno fijo liberado');
+
+      document.getElementById('btn-permanente').onclick = async () => {
+        menu.remove();
+        if (!confirm('¿Desbloquear permanentemente? El turno dejará de ser fijo para todas las semanas.')) return;
+        const diaSemana = dias[diaActivo].getDay();
+        await guardarFijo(diaSemana, i, '', '', false);
+        const nuevo = { ...estadoDia,
+          ocupados: [...estadoDia.ocupados],
+          nombres:  [...estadoDia.nombres],
+          tels:     [...estadoDia.tels],
+          fijos:    [...(estadoDia.fijos || Array(HORAS.length).fill(false))]
+        };
+        nuevo.fijos[i]    = false;
+        nuevo.ocupados[i] = false;
+        nuevo.nombres[i]  = '';
+        nuevo.tels[i]     = '';
+        await guardarDia(diaKey(dias[diaActivo]), nuevo);
+        showToast('🔓 Turno fijo liberado permanentemente');
+      };
     };
 
     const fields = document.createElement('div');
