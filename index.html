@@ -83,7 +83,7 @@ async function cargarFijosDelDia(diaSemana) {
   return snap.exists() ? snap.data() : null;
 }
 
-// Aplica los turnos fijos al día si el slot no está ya ocupado manualmente
+// Aplica los turnos fijos al día — restaura nombre/tel aunque el slot ya exista
 async function aplicarFijosAlDia(diaDate, diaKeyStr) {
   const fijos = await cargarFijosDelDia(diaDate.getDay());
   if (!fijos) return;
@@ -91,18 +91,41 @@ async function aplicarFijosAlDia(diaDate, diaKeyStr) {
   const estado = snap.exists() ? snap.data() : emptyDia();
   const excepciones = fijos.excepciones || {};
   let cambio = false;
+  let excepcionesCambiadas = false;
+
   fijos.activos.forEach((activo, i) => {
     // No aplicar si hay excepción para esta fecha específica
     if (activo && excepciones[i]?.includes(diaKeyStr)) return;
-    if (activo && !estado.ocupados[i]) {
-      estado.ocupados[i] = true;
-      estado.nombres[i]  = fijos.nombres[i];
-      estado.tels[i]     = fijos.tels[i];
-      estado.fijos       = estado.fijos || Array(HORAS.length).fill(false);
-      estado.fijos[i]    = true;
-      cambio = true;
+
+    if (activo) {
+      // Restaurar si: el slot está vacío O si el slot tiene fijo=true pero nombre vacío
+      const esFijoVacio = estado.fijos?.[i] === true && !estado.nombres[i];
+      const estaVacio = !estado.ocupados[i];
+      if (estaVacio || esFijoVacio) {
+        estado.ocupados[i] = true;
+        estado.nombres[i]  = fijos.nombres[i];
+        estado.tels[i]     = fijos.tels[i];
+        estado.fijos       = estado.fijos || Array(HORAS.length).fill(false);
+        estado.fijos[i]    = true;
+        cambio = true;
+      }
     }
   });
+
+  // Limpiar excepciones vencidas (fechas pasadas) para no acumular indefinidamente
+  const hoy = diaKey(new Date());
+  Object.keys(excepciones).forEach(idx => {
+    const filtradas = excepciones[idx].filter(f => f >= hoy);
+    if (filtradas.length !== excepciones[idx].length) {
+      excepciones[idx] = filtradas;
+      excepcionesCambiadas = true;
+    }
+  });
+  if (excepcionesCambiadas) {
+    const diaSemana = diaDate.getDay();
+    await setDoc(doc(db, 'turnosfijos', `${diaSemana}`), { ...fijos, excepciones }, { merge: true });
+  }
+
   if (cambio) await guardarDia(diaKeyStr, estado);
 }
 
