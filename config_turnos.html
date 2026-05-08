@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Configuración — Turnos</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@300;400;600&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet">
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyClQCeB0wyX12KcsSSgIT1pdvh3jTS20qA",
+  authDomain: "padel-team-76749.firebaseapp.com",
+  projectId: "padel-team-76749",
+  storageBucket: "padel-team-76749.firebasestorage.app",
+  messagingSenderId: "449257104174",
+  appId: "1:449257104174:web:7f72b5d62c2d92813dd0bf"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+let logoBase64 = null;
+let cantCanchas = 1;
+let canchasConfig = []; // Array de { nombre, apertura, cierre, duracion, receso, receso_inicio, receso_fin }
+
+// ── INIT ──────────────────────────────────────────────────
+async function init() {
+  await cargarConfig();
+  checkMigracionLocalStorage();
+}
+
+async function cargarConfig() {
+  try {
+    showToast('Cargando configuración...');
+    const snap = await getDoc(doc(db, 'config', 'turnos'));
+    if (!snap.exists()) { initCanchasDefault(1); renderCanchas(); return; }
+    const c = snap.data();
+
+    if (c.nombre) document.getElementById('cfg-nombre').value = c.nombre;
+    if (c.logo) {
+      logoBase64 = c.logo;
+      mostrarPreviewLogo(c.logo);
+    }
+    if (c.colorPrincipal) {
+      document.getElementById('cfg-color1').value = c.colorPrincipal;
+      document.getElementById('cfg-color1-hex').value = c.colorPrincipal;
+    }
+    if (c.colorSecundario) {
+      document.getElementById('cfg-color2').value = c.colorSecundario;
+      document.getElementById('cfg-color2-hex').value = c.colorSecundario;
+    }
+    if (c.estiloOcupado) document.getElementById('cfg-estilo').value = c.estiloOcupado;
+    if (c.pinAdmin) document.getElementById('cfg-pin').value = c.pinAdmin;
+
+    // Contactos
+    if (c.contactos) {
+      c.contactos.forEach((ct, i) => {
+        const ni = document.getElementById(`cfg-ct-nombre-${i+1}`);
+        const ti = document.getElementById(`cfg-ct-tel-${i+1}`);
+        if (ni) ni.value = ct.nombre || '';
+        if (ti) ti.value = ct.tel || '';
+      });
+    }
+
+    // Canchas
+    cantCanchas = c.cantCanchas || 1;
+    document.getElementById('cfg-canchas').value = cantCanchas;
+    canchasConfig = c.canchas || [];
+    if (canchasConfig.length < cantCanchas) initCanchasDefault(cantCanchas);
+    renderCanchas();
+    document.getElementById('toast').classList.remove('show');
+  } catch(e) {
+    console.error(e);
+    initCanchasDefault(1);
+    renderCanchas();
+  }
+}
+
+function initCanchasDefault(n) {
+  canchasConfig = [];
+  for (let i = 0; i < n; i++) {
+    canchasConfig.push({
+      nombre: `Cancha ${i+1}`,
+      apertura: '09:00',
+      cierre: '23:00',
+      duracion: 75,
+      receso: false,
+      receso_inicio: '13:00',
+      receso_fin: '15:00'
+    });
+  }
+}
+
+// ── CANCHAS ───────────────────────────────────────────────
+function renderCanchas() {
+  const wrap = document.getElementById('canchas-wrap');
+  wrap.innerHTML = '';
+  canchasConfig.forEach((c, i) => {
+    const div = document.createElement('div');
+    div.className = 'cancha-card';
+    div.innerHTML = `
+      <div class="cancha-header">
+        <span class="cancha-num">${i+1}</span>
+        <input type="text" class="cancha-nombre-input" value="${c.nombre}" 
+          oninput="window.updateCancha(${i},'nombre',this.value)"
+          placeholder="Nombre de la cancha">
+      </div>
+      <div class="field-row">
+        <div class="field-half">
+          <label>Apertura</label>
+          <input type="time" value="${c.apertura}" oninput="window.updateCancha(${i},'apertura',this.value); window.actualizarHorasPreview(${i})">
+        </div>
+        <div class="field-half">
+          <label>Cierre</label>
+          <input type="time" value="${c.cierre}" oninput="window.updateCancha(${i},'cierre',this.value); window.actualizarHorasPreview(${i})">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field-half">
+          <label>Duración turno (min)</label>
+          <input type="number" min="30" max="180" step="5" value="${c.duracion}" oninput="window.updateCancha(${i},'duracion',parseInt(this.value)||75); window.actualizarHorasPreview(${i})">
+        </div>
+        <div class="field-half">
+          <label>Receso</label>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+            <div id="toggle-receso-${i}" onclick="window.toggleReceso(${i})" class="toggle-switch ${c.receso?'on':''}">
+              <div class="toggle-circle"></div>
+            </div>
+            <span style="font-size:11px;color:var(--muted);">${c.receso?'Activo':'Inactivo'}</span>
+          </div>
+        </div>
+      </div>
+      <div id="receso-panel-${i}" style="display:${c.receso?'flex':'none'};gap:10px;margin-top:4px;">
+        <div class="field-half">
+          <label>Inicio receso</label>
+          <input type="time" value="${c.receso_inicio||'13:00'}" oninput="window.updateCancha(${i},'receso_inicio',this.value); window.actualizarHorasPreview(${i})">
+        </div>
+        <div class="field-half">
+          <label>Fin receso</label>
+          <input type="time" value="${c.receso_fin||'15:00'}" oninput="window.updateCancha(${i},'receso_fin',this.value); window.actualizarHorasPreview(${i})">
+        </div>
+      </div>
+      <div class="horas-preview" id="horas-preview-${i}"></div>
+      ${i > 0 ? `<button class="btn-copiar" onclick="window.copiarDesdeCancha0(${i})">↩ Copiar horarios de Cancha 1</button>` : ''}
+    `;
+    wrap.appendChild(div);
+    actualizarHorasPreview(i);
+  });
+}
+
+window.updateCancha = function(i, campo, valor) {
+  if (!canchasConfig[i]) return;
+  canchasConfig[i][campo] = valor;
+};
+
+window.toggleReceso = function(i) {
+  canchasConfig[i].receso = !canchasConfig[i].receso;
+  const tog = document.getElementById(`toggle-receso-${i}`);
+  const panel = document.getElementById(`receso-panel-${i}`);
+  const label = tog.nextElementSibling;
+  tog.classList.toggle('on', canchasConfig[i].receso);
+  panel.style.display = canchasConfig[i].receso ? 'flex' : 'none';
+  if (label) label.textContent = canchasConfig[i].receso ? 'Activo' : 'Inactivo';
+  actualizarHorasPreview(i);
+};
+
+window.actualizarHorasPreview = function(i) {
+  const c = canchasConfig[i];
+  const horas = calcularHoras(c);
+  const el = document.getElementById(`horas-preview-${i}`);
+  if (!el) return;
+  if (horas.length === 0) {
+    el.innerHTML = '<span style="color:var(--rojo);">⚠ Sin turnos — revisá apertura/cierre/duración</span>';
+    return;
+  }
+  el.innerHTML = `<span style="color:var(--muted);font-size:10px;letter-spacing:1px;">${horas.length} turnos: </span>` +
+    horas.map(h => `<span class="hora-chip-prev">${h}</span>`).join('');
+};
+
+function calcularHoras(c) {
+  const horas = [];
+  const [ah, am] = (c.apertura||'09:00').split(':').map(Number);
+  const [ch, cm] = (c.cierre||'23:00').split(':').map(Number);
+  const dur = parseInt(c.duracion) || 75;
+  let actual = ah * 60 + am;
+  const fin = ch * 60 + cm;
+  const rInicio = c.receso ? timeToMin(c.receso_inicio||'13:00') : -1;
+  const rFin    = c.receso ? timeToMin(c.receso_fin||'15:00')    : -1;
+
+  while (actual + dur <= fin) {
+    // Saltear si cae en receso
+    if (c.receso && actual >= rInicio && actual < rFin) {
+      actual = rFin;
+      continue;
+    }
+    const hh = String(Math.floor(actual/60)%24).padStart(2,'0');
+    const mm = String(actual%60).padStart(2,'0');
+    horas.push(`${hh}:${mm}`);
+    actual += dur;
+  }
+  return horas;
+}
+
+function timeToMin(t) {
+  const [h,m] = (t||'00:00').split(':').map(Number);
+  return h*60+m;
+}
+
+window.copiarDesdeCancha0 = function(destino) {
+  const origen = canchasConfig[0];
+  canchasConfig[destino] = {
+    ...canchasConfig[destino],
+    apertura: origen.apertura,
+    cierre: origen.cierre,
+    duracion: origen.duracion,
+    receso: origen.receso,
+    receso_inicio: origen.receso_inicio,
+    receso_fin: origen.receso_fin
+  };
+  renderCanchas();
+  showToast(`✓ Horarios de Cancha 1 copiados a Cancha ${destino+1}`);
+};
+
+// Cuando cambia cantidad de canchas
+window.onCantCanchasChange = function() {
+  const nueva = parseInt(document.getElementById('cfg-canchas').value) || 1;
+  if (nueva === cantCanchas) return;
+  if (nueva > cantCanchas) {
+    // Agregar nuevas
+    for (let i = cantCanchas; i < nueva; i++) {
+      canchasConfig.push({
+        nombre: `Cancha ${i+1}`,
+        apertura: canchasConfig[0]?.apertura || '09:00',
+        cierre: canchasConfig[0]?.cierre || '23:00',
+        duracion: canchasConfig[0]?.duracion || 75,
+        receso: canchasConfig[0]?.receso || false,
+        receso_inicio: canchasConfig[0]?.receso_inicio || '13:00',
+        receso_fin: canchasConfig[0]?.receso_fin || '15:00'
+      });
+    }
+    // Preguntar si copiar config de cancha 1
+    if (cantCanchas === 1 && nueva > 1) {
+      const resp = confirm(`¿Querés usar la misma configuración de horarios de Cancha 1 para las nuevas canchas?`);
+      if (!resp) {
+        // Resetear las nuevas a default
+        for (let i = 1; i < nueva; i++) {
+          canchasConfig[i] = { nombre:`Cancha ${i+1}`, apertura:'09:00', cierre:'23:00', duracion:75, receso:false, receso_inicio:'13:00', receso_fin:'15:00' };
+        }
+      }
+    }
+  } else {
+    // Reducir
+    canchasConfig = canchasConfig.slice(0, nueva);
+  }
+  cantCanchas = nueva;
+  renderCanchas();
+};
+
+// ── LOGO ──────────────────────────────────────────────────
+window.abrirLogo = function() {
+  document.getElementById('logoInput').click();
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('logoInput').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      logoBase64 = ev.target.result;
+      mostrarPreviewLogo(logoBase64);
+    };
+    reader.readAsDataURL(file);
+  });
+});
+
+function mostrarPreviewLogo(src) {
+  const wrap = document.getElementById('logo-preview-wrap');
+  wrap.innerHTML = `<img src="${src}" style="width:80px;height:80px;object-fit:contain;border-radius:10px;">
+    <button onclick="window.quitarLogo()" style="position:absolute;top:-6px;right:-6px;background:#e63946;border:none;border-radius:50%;width:20px;height:20px;color:#fff;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>`;
+  wrap.style.position = 'relative';
+  wrap.style.display = 'inline-flex';
+}
+
+window.quitarLogo = function() {
+  logoBase64 = null;
+  document.getElementById('logo-preview-wrap').innerHTML = `
+    <div onclick="window.abrirLogo()" style="width:80px;height:80px;border:2px dashed var(--border);border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted);font-size:22px;">📷</div>`;
+};
+
+// ── COLORES ───────────────────────────────────────────────
+window.syncColor = function(id, hexId) {
+  document.getElementById(hexId).value = document.getElementById(id).value;
+};
+window.syncHex = function(id, colorId) {
+  const v = document.getElementById(id).value;
+  if (/^#[0-9A-Fa-f]{6}$/.test(v)) document.getElementById(colorId).value = v;
+};
+
+// ── MIGRACIÓN LOCALSTORAGE ─────────────────────────────────
+function checkMigracionLocalStorage() {
+  const viejo = localStorage.getItem('padelteam_config');
+  if (!viejo) return;
+  try {
+    const data = JSON.parse(viejo);
+    const tieneContactos = data['cfg-n1'] || data['cfg-t1'];
+    if (!tieneContactos) return;
+    // Mostrar banner de migración
+    document.getElementById('banner-migracion').style.display = 'flex';
+    window._datosViejos = data;
+  } catch(e) {}
+}
+
+window.migrarLocalStorage = function() {
+  const data = window._datosViejos;
+  if (!data) return;
+  if (data['cfg-n1']) document.getElementById('cfg-ct-nombre-1').value = data['cfg-n1'];
+  if (data['cfg-t1']) document.getElementById('cfg-ct-tel-1').value = data['cfg-t1'];
+  if (data['cfg-n2']) document.getElementById('cfg-ct-nombre-2').value = data['cfg-n2'];
+  if (data['cfg-t2']) document.getElementById('cfg-ct-tel-2').value = data['cfg-t2'];
+  if (data['cfg-n3']) document.getElementById('cfg-ct-nombre-3').value = data['cfg-n3'];
+  if (data['cfg-t3']) document.getElementById('cfg-ct-tel-3').value = data['cfg-t3'];
+  document.getElementById('banner-migracion').style.display = 'none';
+  showToast('✓ Contactos migrados — guardá la configuración para confirmar');
+};
+
+window.ignorarMigracion = function() {
+  localStorage.removeItem('padelteam_config');
+  document.getElementById('banner-migracion').style.display = 'none';
+};
+
+// ── GUARDAR ───────────────────────────────────────────────
+window.guardarConfig = async function() {
+  const nombre = document.getElementById('cfg-nombre').value.trim();
+  if (!nombre) { showToast('⚠ Ingresá el nombre del complejo'); return; }
+
+  // Leer nombres de canchas desde los inputs del DOM
+  canchasConfig.forEach((c, i) => {
+    const inputNombre = document.querySelector(`#canchas-wrap .cancha-card:nth-child(${i+1}) .cancha-nombre-input`);
+    if (inputNombre) c.nombre = inputNombre.value.trim() || `Cancha ${i+1}`;
+  });
+
+  const contactos = [1,2,3].map(i => ({
+    nombre: document.getElementById(`cfg-ct-nombre-${i}`).value.trim(),
+    tel:    document.getElementById(`cfg-ct-tel-${i}`).value.trim()
+  })).filter(c => c.nombre || c.tel);
+
+  const config = {
+    nombre,
+    colorPrincipal:   document.getElementById('cfg-color1').value,
+    colorSecundario:  document.getElementById('cfg-color2').value,
+    estiloOcupado:    document.getElementById('cfg-estilo').value,
+    pinAdmin:         document.getElementById('cfg-pin').value.trim() || '1234',
+    cantCanchas,
+    canchas:          canchasConfig,
+    contactos,
+    actualizadoEn:    new Date().toISOString()
+  };
+  if (logoBase64) config.logo = logoBase64;
+
+  try {
+    showToast('Guardando...');
+    await setDoc(doc(db, 'config', 'turnos'), config);
+    // Limpiar localStorage viejo
+    localStorage.removeItem('padelteam_config');
+    showToast('✅ Configuración guardada');
+  } catch(e) {
+    console.error(e);
+    showToast('❌ Error al guardar');
+  }
+};
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+init();
+</script>
+<style>
+:root {
+  --azul:#4a9eff; --cyan:#00d4ff;
+  --bg:#0a0a0f; --bg2:#111118; --bg3:#18181f;
+  --border:#222230; --text:#e0e0f0; --muted:#555570; --label:#7a7a99;
+  --verde:#4caf50; --rojo:#e63946; --amarillo:#f0b429;
+}
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+body { background:var(--bg); color:var(--text); font-family:'Rajdhani',sans-serif; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:0 0 60px; }
+
+/* HEADER */
+.header { width:100%; max-width:500px; padding:20px 20px 0; }
+.header-logo { font-family:'Bebas Neue',sans-serif; font-size:28px; letter-spacing:4px; color:#fff; }
+.header-logo span { color:var(--azul); }
+.header-sub { font-family:'Oswald',sans-serif; font-size:11px; color:var(--muted); letter-spacing:3px; margin-top:2px; }
+.header-line { width:100%; height:1px; background:linear-gradient(90deg,var(--azul),var(--cyan),transparent); margin-top:12px; }
+
+/* BANNER MIGRACIÓN */
+.banner-mig { display:none; width:100%; max-width:500px; background:rgba(240,180,41,0.08); border:1px solid rgba(240,180,41,0.3); border-radius:10px; padding:12px 14px; margin:14px 20px 0; gap:10px; flex-direction:column; }
+.banner-mig-titulo { font-family:'Oswald',sans-serif; font-size:13px; color:var(--amarillo); letter-spacing:1px; }
+.banner-mig-desc { font-size:12px; color:var(--muted); }
+.banner-mig-btns { display:flex; gap:8px; }
+.banner-mig-btns button { padding:6px 14px; border-radius:6px; font-family:'Oswald',sans-serif; font-size:12px; letter-spacing:1px; cursor:pointer; border:none; }
+.btn-mig-si { background:var(--amarillo); color:#000; }
+.btn-mig-no { background:none; border:1px solid var(--border)!important; color:var(--muted); }
+
+/* SECCIONES */
+.section { width:100%; max-width:500px; padding:0 20px; margin-top:24px; }
+.section-label { font-family:'Oswald',sans-serif; font-size:11px; color:var(--azul); letter-spacing:3px; margin-bottom:12px; }
+.divider { width:100%; max-width:500px; height:1px; background:var(--border); margin:24px 0 0; }
+
+.field { margin-bottom:14px; }
+.field label { display:block; font-family:'Oswald',sans-serif; font-size:11px; color:var(--label); letter-spacing:2px; margin-bottom:6px; }
+.field input, .field select, .field textarea {
+  width:100%; background:var(--bg2); border:1px solid var(--border);
+  border-radius:8px; padding:10px 12px; color:var(--text);
+  font-family:'Oswald',sans-serif; font-size:14px; outline:none;
+}
+.field input:focus, .field select:focus { border-color:var(--azul); }
+.field select { cursor:pointer; }
+
+/* LOGO */
+.logo-wrap { display:flex; align-items:center; gap:16px; }
+.logo-btn { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:10px 16px; color:var(--azul); font-family:'Oswald',sans-serif; font-size:13px; letter-spacing:1px; cursor:pointer; }
+
+/* COLORES */
+.color-row { display:flex; align-items:center; gap:10px; background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:8px 12px; margin-bottom:10px; }
+.color-row input[type=color] { width:40px; height:40px; border:none; border-radius:6px; cursor:pointer; background:none; padding:0; }
+.color-row input[type=text] { flex:1; background:none; border:none; color:var(--text); font-family:'Oswald',sans-serif; font-size:14px; outline:none; letter-spacing:2px; }
+.color-label { font-family:'Oswald',sans-serif; font-size:11px; color:var(--muted); letter-spacing:1px; width:80px; flex-shrink:0; }
+
+/* CANCHAS */
+.canchas-count { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+.canchas-count input { width:80px; background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:8px 12px; color:var(--text); font-family:'Oswald',sans-serif; font-size:16px; outline:none; text-align:center; }
+.canchas-count label { font-family:'Oswald',sans-serif; font-size:13px; color:var(--muted); letter-spacing:1px; }
+.cancha-card { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:12px; }
+.cancha-header { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+.cancha-num { background:var(--azul); color:#fff; font-family:'Bebas Neue',sans-serif; font-size:18px; width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.cancha-nombre-input { flex:1; background:none; border:none; border-bottom:1px solid var(--border); color:#fff; font-family:'Bebas Neue',sans-serif; font-size:18px; letter-spacing:2px; outline:none; padding:2px 4px; }
+.cancha-nombre-input:focus { border-color:var(--azul); }
+.field-row { display:flex; gap:10px; margin-bottom:10px; }
+.field-half { flex:1; }
+.field-half label { display:block; font-family:'Oswald',sans-serif; font-size:10px; color:var(--label); letter-spacing:2px; margin-bottom:4px; }
+.field-half input { width:100%; background:var(--bg3); border:1px solid var(--border); border-radius:6px; padding:8px 10px; color:var(--text); font-family:'Oswald',sans-serif; font-size:14px; outline:none; }
+.field-half input:focus { border-color:var(--azul); }
+.horas-preview { display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; min-height:24px; }
+.hora-chip-prev { font-family:'Oswald',sans-serif; font-size:11px; color:var(--azul); background:rgba(74,158,255,0.1); border-radius:4px; padding:2px 6px; }
+.btn-copiar { width:100%; margin-top:10px; background:none; border:1px dashed var(--border); border-radius:6px; padding:8px; color:var(--muted); font-family:'Oswald',sans-serif; font-size:11px; letter-spacing:1px; cursor:pointer; }
+.btn-copiar:hover { border-color:var(--azul); color:var(--azul); }
+
+/* TOGGLE */
+.toggle-switch { width:42px; height:24px; border-radius:12px; background:var(--border); cursor:pointer; position:relative; transition:background 0.2s; flex-shrink:0; }
+.toggle-switch.on { background:var(--azul); }
+.toggle-circle { width:18px; height:18px; border-radius:50%; background:#fff; position:absolute; top:3px; left:3px; transition:left 0.2s; }
+.toggle-switch.on .toggle-circle { left:21px; }
+
+/* CONTACTOS */
+.contacto-row { display:flex; gap:8px; margin-bottom:8px; }
+.contacto-row input { flex:1; background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:9px 12px; color:var(--text); font-family:'Oswald',sans-serif; font-size:14px; outline:none; }
+.contacto-row input:focus { border-color:var(--azul); }
+.contacto-num { font-family:'Bebas Neue',sans-serif; font-size:16px; color:var(--muted); width:20px; flex-shrink:0; align-self:center; }
+
+/* BTN GUARDAR */
+.btn-guardar { width:100%; max-width:500px; margin:24px 20px 0; padding:16px; background:var(--azul); border:none; border-radius:12px; color:#fff; font-family:'Bebas Neue',sans-serif; font-size:22px; letter-spacing:3px; cursor:pointer; box-shadow:0 4px 24px rgba(74,158,255,0.3); transition:opacity 0.15s, transform 0.1s; }
+.btn-guardar:active { transform:scale(0.98); opacity:0.9; }
+.btn-volver { width:100%; max-width:500px; margin:10px 20px 0; padding:12px; background:none; border:1px solid var(--border); border-radius:12px; color:var(--muted); font-family:'Oswald',sans-serif; font-size:14px; letter-spacing:2px; cursor:pointer; }
+
+/* TOAST */
+.toast { position:fixed; bottom:30px; left:50%; transform:translateX(-50%) translateY(100px); background:var(--azul); color:#fff; font-family:'Oswald',sans-serif; font-size:15px; padding:10px 28px; border-radius:30px; letter-spacing:1px; transition:transform 0.35s cubic-bezier(.21,1.02,.73,1); z-index:9999; white-space:nowrap; pointer-events:none; }
+.toast.show { transform:translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-logo" id="headerLogo">PADEL <span>TEAM</span> · TURNOS</div>
+  <div class="header-sub">CONFIGURACIÓN</div>
+  <div class="header-line"></div>
+</div>
+
+<!-- Banner migración -->
+<div class="banner-mig" id="banner-migracion">
+  <div class="banner-mig-titulo">📦 DATOS GUARDADOS EN ESTE DISPOSITIVO</div>
+  <div class="banner-mig-desc">Encontramos contactos guardados localmente. ¿Querés migrarlos a Firebase para que funcionen en todos los dispositivos?</div>
+  <div class="banner-mig-btns">
+    <button class="btn-mig-si" onclick="window.migrarLocalStorage()">✓ SÍ, MIGRAR</button>
+    <button class="btn-mig-no" onclick="window.ignorarMigracion()">Ignorar</button>
+  </div>
+</div>
+
+<!-- IDENTIDAD -->
+<div class="section">
+  <div class="section-label">Identidad del complejo</div>
+  <div class="field">
+    <label>Nombre del complejo / club</label>
+    <input type="text" id="cfg-nombre" placeholder="Ej: Padel Team Guaminí">
+  </div>
+  <div class="field">
+    <label>Logo</label>
+    <div class="logo-wrap">
+      <div id="logo-preview-wrap">
+        <div onclick="window.abrirLogo()" style="width:80px;height:80px;border:2px dashed var(--border);border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted);font-size:22px;">📷</div>
+      </div>
+      <div>
+        <button class="logo-btn" onclick="window.abrirLogo()">📁 Subir logo</button>
+        <div style="font-family:'Oswald',sans-serif;font-size:10px;color:var(--muted);letter-spacing:1px;margin-top:6px;">PNG o JPG recomendado</div>
+      </div>
+    </div>
+    <input type="file" id="logoInput" accept="image/*" style="display:none;">
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- COLORES -->
+<div class="section">
+  <div class="section-label">Colores</div>
+  <div class="color-row">
+    <span class="color-label">COLOR 1</span>
+    <input type="color" id="cfg-color1" value="#4a9eff" oninput="window.syncColor('cfg-color1','cfg-color1-hex')">
+    <input type="text" id="cfg-color1-hex" value="#4a9eff" maxlength="7" oninput="window.syncHex('cfg-color1-hex','cfg-color1')" placeholder="#4a9eff">
+  </div>
+  <div class="color-row">
+    <span class="color-label">COLOR 2</span>
+    <input type="color" id="cfg-color2" value="#00d4ff" oninput="window.syncColor('cfg-color2','cfg-color2-hex')">
+    <input type="text" id="cfg-color2-hex" value="#00d4ff" maxlength="7" oninput="window.syncHex('cfg-color2-hex','cfg-color2')" placeholder="#00d4ff">
+  </div>
+  <div class="field" style="margin-top:10px;">
+    <label>Estilo de turno ocupado</label>
+    <select id="cfg-estilo">
+      <option value="cruz">✕ Cruz roja</option>
+      <option value="pelota">🎾 Pelota de pádel</option>
+      <option value="bloque">■ Bloque sólido</option>
+    </select>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- CANCHAS -->
+<div class="section">
+  <div class="section-label">Canchas</div>
+  <div class="canchas-count">
+    <label>Cantidad de canchas</label>
+    <input type="number" id="cfg-canchas" min="1" max="8" value="1" onchange="window.onCantCanchasChange()">
+  </div>
+  <div id="canchas-wrap"></div>
+</div>
+
+<div class="divider"></div>
+
+<!-- CONTACTOS -->
+<div class="section">
+  <div class="section-label">Contactos para reservas</div>
+  <div style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--muted);letter-spacing:1px;margin-bottom:12px;">Aparecen en la imagen que se comparte</div>
+  <div class="contacto-row">
+    <span class="contacto-num">1</span>
+    <input type="text" id="cfg-ct-nombre-1" placeholder="Nombre">
+    <input type="tel" id="cfg-ct-tel-1" placeholder="Teléfono">
+  </div>
+  <div class="contacto-row">
+    <span class="contacto-num">2</span>
+    <input type="text" id="cfg-ct-nombre-2" placeholder="Nombre">
+    <input type="tel" id="cfg-ct-tel-2" placeholder="Teléfono">
+  </div>
+  <div class="contacto-row">
+    <span class="contacto-num">3</span>
+    <input type="text" id="cfg-ct-nombre-3" placeholder="Nombre">
+    <input type="tel" id="cfg-ct-tel-3" placeholder="Teléfono">
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- SEGURIDAD -->
+<div class="section">
+  <div class="section-label">Seguridad</div>
+  <div class="field">
+    <label>PIN de administrador (para acceder a esta configuración)</label>
+    <input type="password" id="cfg-pin" maxlength="6" inputmode="numeric" placeholder="1234" style="letter-spacing:4px;font-size:20px;">
+  </div>
+  <div style="font-family:'Oswald',sans-serif;font-size:11px;color:var(--muted);letter-spacing:1px;margin-top:-8px;">Mínimo 4 dígitos. Por defecto: 1234</div>
+</div>
+
+<div style="width:100%;max-width:500px;padding:0 20px;">
+  <button class="btn-guardar" onclick="window.guardarConfig()">GUARDAR CONFIGURACIÓN</button>
+  <button class="btn-volver" onclick="window.location.href='index.html'">← VOLVER AL GESTOR</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+</body>
+</html>
