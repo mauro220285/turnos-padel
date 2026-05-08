@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Turnos</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎾</text></svg>">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@300;400;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script type="module">
@@ -161,6 +162,11 @@ function escucharDiaTodasCanchas(){
   estadosDias=Array(CONFIG.cantCanchas).fill(null);
   const key=diaKey(dias[diaActivo]);
   renderColumnasLayout();
+  // Actualizar nombre en banner cliente
+  const bannerNombre = document.getElementById("cliente-nombre-cancha");
+  if (bannerNombre && esCliente && CONFIG.nombre) {
+    bannerNombre.textContent = CONFIG.nombre.toUpperCase();
+  }
   CONFIG.canchas.forEach((c,ci)=>{
     const horas=calcularHoras(c);
     aplicarFijosAlDia(ci,dias[diaActivo],key);
@@ -219,9 +225,20 @@ function renderTurnosCancha(ci){
   if(esCliente){
     horas.forEach((hora,i)=>{
       const row=document.createElement("div");row.className="turno-row-cliente";
-      const ocp=s.ocupados&&s.ocupados[i];const esTorneo=s.nombres&&s.nombres[i]&&s.nombres[i].toLowerCase()==="torneo";
-      if(ocp){row.innerHTML="<div class='cliente-hora ocupado-c'>"+hora+"</div><div class='cliente-estado "+(esTorneo?"torneo-badge":"ocupado-badge")+"'>"+( esTorneo?"TORNEO":"OCUPADO")+"</div>";}
-      else{row.innerHTML="<div class='cliente-hora libre-c'>"+hora+"</div><div class='cliente-estado libre-badge'>DISPONIBLE</div>";}
+      const ocp=s.ocupados&&s.ocupados[i];
+      const esTorneo=s.nombres&&s.nombres[i]&&s.nombres[i].toLowerCase()==="torneo";
+      const c1=CONFIG.colorPrincipal||"#4a9eff";
+      const c2=CONFIG.colorSecundario||"#00d4ff";
+      if(esTorneo){
+        row.innerHTML="<div class=\'cliente-hora\' style=\'color:"+c2+";\'>"+hora+"</div>"
+          +"<div class=\'cliente-estado\' style=\'background:rgba(0,0,0,0.3);color:"+c2+";border:1px solid "+c2+";\'>🏆 TORNEO</div>";
+      } else if(ocp){
+        row.innerHTML="<div class=\'cliente-hora\' style=\'color:#2a2a2a;\'>"+hora+"</div>"
+          +"<div class=\'cliente-estado\' style=\'background:rgba(230,57,70,0.1);color:#e63946;border:1px solid #e63946;\'>OCUPADO</div>";
+      } else {
+        row.innerHTML="<div class=\'cliente-hora\' style=\'color:"+c1+";\'>"+hora+"</div>"
+          +"<div class=\'cliente-estado\' style=\'background:rgba(76,175,80,0.1);color:#4caf50;border:1px solid #4caf50;\'>DISPONIBLE</div>";
+      }
       wrap.appendChild(row);
     });return;
   }
@@ -439,7 +456,10 @@ body{background:#0d0d0d;min-height:100vh;font-family:Oswald,sans-serif;display:f
 </div>
 <div class="header-line"></div>
 <div id="modoCliente">
-  <div class="banner-cliente"><p>🟢 DISPONIBLE &nbsp;|&nbsp; 🔴 OCUPADO &nbsp;|&nbsp; 🔵 TORNEO</p></div>
+  <div class="banner-cliente">
+    <div id="cliente-nombre-cancha" style="font-family:'Bebas Neue',sans-serif;font-size:13px;letter-spacing:3px;color:var(--c1);margin-bottom:4px;"></div>
+    <p>🟢 DISPONIBLE &nbsp;|&nbsp; 🔴 OCUPADO &nbsp;|&nbsp; 🔵 TORNEO</p>
+  </div>
 </div>
 <div id="modoEquipo" style="display:none;width:100%;max-width:440px;"></div>
 <div id="canchas-tabs"></div>
