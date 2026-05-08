@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Turnos</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@300;400;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"><\/script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
@@ -103,9 +103,9 @@ function renderHeader(){
     wrap.innerHTML="<img src='"+CONFIG.logo+"' style='height:60px;max-width:200px;object-fit:contain;'>";
   } else {
     const p=nombre.toUpperCase().split(" ");
-    wrap.innerHTML="<div style='font-family:Bebas Neue,sans-serif;font-size:20px;color:var(--c1);letter-spacing:10px;line-height:1;'>"+p[0]+"</div>"
+    wrap.innerHTML="<div style='font-family:Bebas Neue,sans-serif;font-size:20px;color:"+CONFIG.colorPrincipal+";letter-spacing:10px;line-height:1;'>"+p[0]+"</div>"
       +(p.length>1?"<div style='font-family:Bebas Neue,sans-serif;font-size:64px;color:#fff;letter-spacing:6px;line-height:0.95;'>"+p.slice(1).join(" ")+"</div>":"")
-      +"<div style='font-family:Bebas Neue,sans-serif;font-size:18px;color:var(--c1);letter-spacing:6px;margin-top:2px;'>TURNOS</div>";
+      +"<div style='font-family:Bebas Neue,sans-serif;font-size:18px;color:"+CONFIG.colorPrincipal+";letter-spacing:6px;margin-top:2px;'>TURNOS</div>";
   }
 }
 
@@ -204,7 +204,7 @@ function renderColumnasLayout(){
 
 function iconoOcupado(esFijo){
   const est=CONFIG.estiloOcupado||"cruz";
-  const col=esFijo?"var(--cfijo)":"#e63946";
+  const col=esFijo?CONFIG.colorSecundario||"#a855f7":"#e63946";
   if(est==="pelota")return "<span class='x-icon' style='font-size:40px;position:absolute;line-height:1;'>🎾</span>";
   if(est==="bloque")return "<span class='x-icon' style='position:absolute;width:70px;height:48px;background:"+col+";border-radius:4px;opacity:0.25;'></span>";
   return "<span class='x-icon'><svg width='72' height='52' viewBox='0 0 72 52'><line x1='6' y1='6' x2='66' y2='46' stroke='"+col+"' stroke-width='10' stroke-linecap='round'/><line x1='66' y1='6' x2='6' y2='46' stroke='"+col+"' stroke-width='10' stroke-linecap='round'/></svg></span>";
@@ -274,10 +274,10 @@ function renderTurnosCancha(ci){
     cand.ondblclick=async(e)=>{
       e.stopPropagation();if(!esFijo)return;
       const menu=document.createElement("div");
-      menu.style.cssText="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#1a1a2e;border:1px solid var(--c1);border-radius:12px;padding:20px;z-index:9999;min-width:280px;box-shadow:0 8px 32px rgba(0,0,0,0.5);";
-      menu.innerHTML="<div style='font-family:Oswald,sans-serif;font-size:14px;letter-spacing:2px;color:var(--c1);margin-bottom:12px;'>DESBLOQUEAR TURNO FIJO</div>"
+      menu.style.cssText="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#1a1a2e;border:1px solid "+CONFIG.colorPrincipal+";border-radius:12px;padding:20px;z-index:9999;min-width:280px;box-shadow:0 8px 32px rgba(0,0,0,0.5);";
+      menu.innerHTML="<div style='font-family:Oswald,sans-serif;font-size:14px;letter-spacing:2px;color:"+CONFIG.colorPrincipal+";margin-bottom:12px;'>DESBLOQUEAR TURNO FIJO</div>"
         +"<div style='font-size:13px;color:#aaa;margin-bottom:16px;'>"+(s.nombres&&s.nombres[i]?s.nombres[i]:"")+" · "+hora+"</div>"
-        +"<button id='bm1' style='width:100%;padding:12px;background:rgba(74,158,255,0.1);border:1px solid var(--c1);border-radius:8px;color:var(--c1);font-family:Oswald,sans-serif;font-size:13px;letter-spacing:1px;cursor:pointer;margin-bottom:8px;'>📅 SOLO ESTA SEMANA</button>"
+        +"<button id='bm1' style='width:100%;padding:12px;background:rgba(74,158,255,0.1);border:1px solid "+CONFIG.colorPrincipal+";border-radius:8px;color:"+CONFIG.colorPrincipal+";font-family:Oswald,sans-serif;font-size:13px;letter-spacing:1px;cursor:pointer;margin-bottom:8px;'>📅 SOLO ESTA SEMANA</button>"
         +"<button id='bm2' style='width:100%;padding:12px;background:rgba(230,57,70,0.1);border:1px solid #e63946;border-radius:8px;color:#e63946;font-family:Oswald,sans-serif;font-size:13px;letter-spacing:1px;cursor:pointer;margin-bottom:8px;'>🔓 DESBLOQUEAR PERMANENTE</button>"
         +"<button id='bm3' style='width:100%;padding:10px;background:none;border:1px solid #333;border-radius:8px;color:#666;font-family:Oswald,sans-serif;font-size:12px;cursor:pointer;'>CANCELAR</button>";
       document.body.appendChild(menu);
@@ -349,7 +349,7 @@ async function init(){
   escucharDiaTodasCanchas();
 }
 init();
-<\/script>
+</script>
 <style>
 :root{--c1:#4a9eff;--c2:#00d4ff;--c1a2:rgba(74,158,255,0.2);--c1a1:rgba(74,158,255,0.1);--c2a2:rgba(0,212,255,0.2);--c2a1:rgba(0,212,255,0.1);--cfijo:#a855f7;--cfijoa1:rgba(168,85,247,0.1);}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
@@ -429,9 +429,9 @@ body{background:#0d0d0d;min-height:100vh;font-family:Oswald,sans-serif;display:f
 <body>
 <div class="header" style="text-align:center;margin-bottom:14px;">
   <div id="header-logo-wrap">
-    <div style="font-family:'Bebas Neue',sans-serif;font-size:20px;color:var(--c1);letter-spacing:10px;line-height:1;">PADEL</div>
+    <div style="font-family:'Bebas Neue',sans-serif;font-size:20px;color:"+CONFIG.colorPrincipal+";letter-spacing:10px;line-height:1;">PADEL</div>
     <div style="font-family:'Bebas Neue',sans-serif;font-size:64px;color:#fff;letter-spacing:6px;line-height:0.95;">TEAM</div>
-    <div style="font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--c1);letter-spacing:6px;margin-top:2px;">TURNOS</div>
+    <div style="font-family:'Bebas Neue',sans-serif;font-size:18px;color:"+CONFIG.colorPrincipal+";letter-spacing:6px;margin-top:2px;">TURNOS</div>
   </div>
 </div>
 <div class="header-line"></div>
@@ -460,6 +460,6 @@ body{background:#0d0d0d;min-height:100vh;font-family:Oswald,sans-serif;display:f
 <script>
 if(!window.location.search.includes("ver"))document.getElementById("link-config").style.display="block";
 if(window.location.search.includes("ver"))document.getElementById("btns-global").style.display="none";
-<\/script>
+</script>
 </body>
 </html>
