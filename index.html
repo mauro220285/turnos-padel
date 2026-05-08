@@ -205,8 +205,9 @@ function renderColumnasLayout(){
 function iconoOcupado(esFijo){
   const est=CONFIG.estiloOcupado||"cruz";
   const col=esFijo?CONFIG.colorSecundario||"#a855f7":"#e63946";
-  if(est==="pelota")return "<span class='x-icon' style='font-size:40px;position:absolute;line-height:1;'>🎾</span>";
-  if(est==="bloque")return "<span class='x-icon' style='position:absolute;width:70px;height:48px;background:"+col+";border-radius:4px;opacity:0.25;'></span>";
+  if(est==="pelota")return "<span class='x-icon' style='font-size:64px;position:absolute;line-height:1;transform:translateY(-4px);'>🎾</span>";
+  if(est==="gris")return ""; // sin icono, solo el horario en gris (via clase CSS)
+  // Cruz (default)
   return "<span class='x-icon'><svg width='72' height='52' viewBox='0 0 72 52'><line x1='6' y1='6' x2='66' y2='46' stroke='"+col+"' stroke-width='10' stroke-linecap='round'/><line x1='66' y1='6' x2='6' y2='46' stroke='"+col+"' stroke-width='10' stroke-linecap='round'/></svg></span>";
 }
 
@@ -229,8 +230,9 @@ function renderTurnosCancha(ci){
     const esFijo=!!(s.fijos&&s.fijos[i]);
     const esTorneo=s.nombres&&s.nombres[i]&&s.nombres[i].toLowerCase()==="torneo";
     const ocp=s.ocupados&&s.ocupados[i];
+    const esGris=CONFIG.estiloOcupado==="gris";
     const btn=document.createElement("button");
-    btn.className="turno-hora-btn"+(ocp?" ocupado":"")+(esTorneo?" torneo":"")+(esFijo?" fijo":"");
+    btn.className="turno-hora-btn"+(ocp?" ocupado":"")+(esTorneo?" torneo":"")+(esFijo?" fijo":"")+(ocp&&esGris?" estilo-gris":"");
     btn.innerHTML="<span class='hora-text'>"+hora+"</span>"+(ocp?iconoOcupado(esFijo):"");
     btn.onclick=async()=>{
       if(esFijo)return;
@@ -372,6 +374,7 @@ body{background:#0d0d0d;min-height:100vh;font-family:Oswald,sans-serif;display:f
 .turno-hora-btn:active{transform:scale(0.93);}
 .hora-text{font-family:"Bebas Neue",sans-serif;font-size:48px;color:var(--c1);letter-spacing:3px;line-height:1;transition:color 0.2s,opacity 0.2s;user-select:none;}
 .turno-hora-btn.ocupado .hora-text{color:#2e2e2e;opacity:0.8;}
+.turno-hora-btn.estilo-gris .hora-text{color:#444;opacity:0.6;}
 .turno-hora-btn.torneo .hora-text{color:var(--c2);opacity:1;}
 .x-icon{position:absolute;display:none;pointer-events:none;}
 .turno-hora-btn.ocupado .x-icon{display:block;}
